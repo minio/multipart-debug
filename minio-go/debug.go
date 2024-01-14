@@ -14,9 +14,11 @@ import (
 	"net/http"
 
 	"github.com/minio/cli"
+	"github.com/minio/minio-go/v7"
+	"github.com/minio/minio-go/v7/pkg/credentials"
 )
 
-var debugClient *Client
+var debugClient *minio.Core
 
 func handleOutput(v interface{}) {
 	out, _ := json.MarshalIndent(v, "", "  ")
@@ -212,20 +214,23 @@ func debugMain(ctx *cli.Context) error {
 	// 	transport = httptracer.GetNewTraceTransport(newTraceV4(), http.DefaultTransport)
 	// }
 	var err error
-	debugClient, err = New(minioCtx.Endpoint, minioCtx.AccessKey, minioCtx.SecretKey, minioCtx.Secure)
+	debugClient, err = minio.NewCore(minioCtx.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(minioCtx.AccessKey, minioCtx.SecretKey, ""),
+		Secure: minioCtx.Secure,
+		Transport: transport,
+	})
 	if err != nil {
 		fmt.Println(err)
 		cli.ShowCommandHelp(ctx, "")
 		return err
 	}
-	debugClient.SetCustomTransport(transport)
 	return nil
 }
 
 func debugNewMultipart(ctx *cli.Context) {
 	bucketName := ctx.String("bucket")
 	objectName := ctx.String("object")
-	result, err := debugClient.initiateMultipartUpload(context.Background(), bucketName, objectName, PutObjectOptions{})
+	result, err := debugClient.NewMultipartUpload(context.Background(), bucketName, objectName, minio.PutObjectOptions{})
 	if err != nil {
 		log.Fatal(err)
 		cli.ShowCommandHelp(ctx, "")
@@ -244,7 +249,7 @@ func debugUploadPart(ctx *cli.Context) {
 		log.Fatal(err)
 	}
 	fi, _ := f.Stat()
-	part, err := debugClient.uploadPart(context.Background(), bucketName, objectName, uploadID, f, partNum, "", "", fi.Size(), PutObjectOptions{}.ServerSideEncryption)
+	part, err := debugClient.PutObjectPart(context.Background(), bucketName, objectName, uploadID, partNum, f, fi.Size(), minio.PutObjectPartOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -256,7 +261,7 @@ func debugCompleteMultipart(ctx *cli.Context) {
 	objectName := ctx.String("object")
 	uploadID := ctx.String("uploadid")
 	parts := ctx.Args()
-	var completeUpload completeMultipartUpload
+	var uparts []minio.CompletePart
 	for _, part := range parts {
 		split := strings.Split(part, ".")
 		partNum, err := strconv.Atoi(split[0])
@@ -264,12 +269,12 @@ func debugCompleteMultipart(ctx *cli.Context) {
 			log.Fatal(err)
 		}
 		md5sum := split[1]
-		completeUpload.Parts = append(completeUpload.Parts, CompletePart{
+		uparts = append(uparts, minio.CompletePart{
 			PartNumber: partNum,
 			ETag:       md5sum,
 		})
 	}
-	result, err := debugClient.completeMultipartUpload(context.Background(), bucketName, objectName, uploadID, completeUpload)
+	result, err := debugClient.CompleteMultipartUpload(context.Background(), bucketName, objectName, uploadID, uparts, minio.PutObjectOptions{})
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -286,7 +291,7 @@ func debugListMultipartUploads(ctx *cli.Context) {
 	if ctx.Bool("delimiter") {
 		delimiter = "/"
 	}
-	result, err := debugClient.listMultipartUploadsQuery(bucketName, keyMarker, uploadIDMarker, prefix, delimiter, maxuploads)
+	result, err := debugClient.ListMultipartUploads(context.Background(), bucketName, keyMarker, uploadIDMarker, prefix, delimiter, maxuploads)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -299,7 +304,7 @@ func debugListUploadParts(ctx *cli.Context) {
 	uploadID := ctx.String("uploadid")
 	partmarker := ctx.Int("partmarker")
 	maxParts := ctx.Int("maxparts")
-	result, err := debugClient.listObjectPartsQuery(bucketName, objectName, uploadID, partmarker, maxParts)
+	result, err := debugClient.ListObjectParts(context.Background(), bucketName, objectName, uploadID, partmarker, maxParts)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -310,7 +315,7 @@ func debugAbortMultipartUpload(ctx *cli.Context) {
 	bucketName := ctx.String("bucket")
 	objectName := ctx.String("object")
 	uploadID := ctx.String("uploadid")
-	err := debugClient.abortMultipartUpload(context.Background(), bucketName, objectName, uploadID)
+	err := debugClient.AbortMultipartUpload(context.Background(), bucketName, objectName, uploadID)
 	if err != nil {
 		handleOutput(struct {
 			Status bool
