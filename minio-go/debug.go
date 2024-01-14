@@ -16,13 +16,18 @@ import (
 	"github.com/minio/cli"
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/encrypt"
 )
 
 var debugClient *minio.Core
 
 func handleOutput(v interface{}) {
-	out, _ := json.MarshalIndent(v, "", "  ")
-	os.Stdout.Write(out)
+	if vstr, ok := v.(string); ok {
+		os.Stdout.WriteString(vstr)
+	} else {
+		out, _ := json.MarshalIndent(v, "", "  ")
+		os.Stdout.Write(out)
+	}
 }
 
 // Debug - entry.
@@ -69,6 +74,10 @@ func Debug() {
 						cli.StringFlag{
 							Name:  "object",
 							Usage: "Object name",
+						},
+						cli.BoolFlag{
+							Name:  "encrypt",
+							Usage: "encrypt the object",
 						},
 					},
 				},
@@ -215,8 +224,8 @@ func debugMain(ctx *cli.Context) error {
 	// }
 	var err error
 	debugClient, err = minio.NewCore(minioCtx.Endpoint, &minio.Options{
-		Creds:  credentials.NewStaticV4(minioCtx.AccessKey, minioCtx.SecretKey, ""),
-		Secure: minioCtx.Secure,
+		Creds:     credentials.NewStaticV4(minioCtx.AccessKey, minioCtx.SecretKey, ""),
+		Secure:    minioCtx.Secure,
 		Transport: transport,
 	})
 	if err != nil {
@@ -230,7 +239,13 @@ func debugMain(ctx *cli.Context) error {
 func debugNewMultipart(ctx *cli.Context) {
 	bucketName := ctx.String("bucket")
 	objectName := ctx.String("object")
-	result, err := debugClient.NewMultipartUpload(context.Background(), bucketName, objectName, minio.PutObjectOptions{})
+	var sse encrypt.ServerSide
+	if ctx.Bool("encrypt") {
+		sse = encrypt.NewSSE()
+	}
+	result, err := debugClient.NewMultipartUpload(context.Background(), bucketName, objectName, minio.PutObjectOptions{
+		ServerSideEncryption: sse,
+	})
 	if err != nil {
 		log.Fatal(err)
 		cli.ShowCommandHelp(ctx, "")
